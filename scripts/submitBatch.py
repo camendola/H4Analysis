@@ -44,7 +44,7 @@ def lxbatchSubmitJob (run, firstspill, nfiles, path, cfg, outdir, queue, job_dir
 
 # ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ----
 
-def htcondorSubmitJob(runs, path, cfg, outdir, queue, job_dir, dryrun):
+def htcondorSubmitJob(runs, path, cfg, outdir, queue, job_dir, dryrun, notar, version, outname):
     jobname = job_dir+'/H4Reco_condor'
     jobtar = job_dir+'/job.tar'
     #---H4Reco script
@@ -52,12 +52,17 @@ def htcondorSubmitJob(runs, path, cfg, outdir, queue, job_dir, dryrun):
     fsh.write ('#!/bin/sh' + '\n\n')
     fsh.write ('declare -a runs=('+' '.join([str(run) for run in runs])+')\n\n')
     fsh.write ('cp '+jobtar+' ./ \n')
-    fsh.write ('tar -xf job.tar \n')
-    fsh.write ('source scripts/setup.sh \n')
-    fsh.write ('make -j 2 \n')
-    fsh.write ('cp '+path+'/'+cfg+' job.cfg \n\n')
-    fsh.write ('bin/H4Reco job.cfg ${runs[${1}]}\n\n')
-    fsh.write ('cp ntuples/*${runs[${1}]}.root '+outdir+'\n')
+    if not notar:
+        fsh.write ('tar -xf job.tar \n')
+        fsh.write ('source scripts/setup.sh \n')
+        fsh.write ('make -j 2 \n')
+        fsh.write ('cp '+path+'/'+cfg+' job.cfg \n\n')
+        fsh.write ('bin/H4Reco job.cfg ${runs[${1}]}\n\n')
+    else:
+        fsh.write ('cd '+path+' \n')
+        fsh.write ('source scripts/setup.sh \n')
+        fsh.write ('bin/H4Reco '+cfg+' ${runs[${1}]}\n\n')
+    fsh.write ('cp '+outname+'/*${runs[${1}]}.root '+outdir+'\n')
     fsh.close ()
     #---HTCondor submit file
     fsub = open (jobname+'.sub', 'w')
@@ -81,7 +86,7 @@ def htcondorSubmitJob(runs, path, cfg, outdir, queue, job_dir, dryrun):
 
 # ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ----
 
-def htcondorSubmitJobs (run, nfiles, path, cfg, outdir, queue, job_dir, dryrun):
+def htcondorSubmitJobs (run, nfiles, path, cfg, outdir, queue, job_dir, dryrun, notar,version, outname):
     # prepare submission
     nspills = getNumberOfSpills(run, path, cfg)
     print('run {r} with {s} spills'.format(r=run, s=nspills))
@@ -97,15 +102,19 @@ def htcondorSubmitJobs (run, nfiles, path, cfg, outdir, queue, job_dir, dryrun):
     #---H4Reco script
     fsh = open (jobname+'.sh', 'w')
     fsh.write ('#!/bin/sh' + '\n\n')
-    fsh.write ('cp '+jobtar+' ./ \n')
-    fsh.write ('tar -xf job.tar \n')
-    fsh.write ('source scripts/setup.sh \n')
-    fsh.write ('make -j 2 \n')
-    fsh.write ('cp '+path+'/'+cfg+' job.cfg \n\n')
+    if not notar:
+        fsh.write ('cp '+jobtar+' ./ \n')
+        fsh.write ('tar -xf job.tar \n')
+        fsh.write ('source scripts/setup.sh \n')
+        fsh.write ('make -j 2 \n')
+    else: 
+        fsh.write ('cd '+path+' \n')
+        fsh.write ('source scripts/setup.sh \n')
+
     fsh.write ('firstspill=$((${1}*'+str(nfiles)+'+1))\n')
     fsh.write ('lastspill=$(((${1}+1)*'+str(nfiles)+'))\n\n')
-    fsh.write ('bin/H4Reco job.cfg {r} $firstspill {nf}\n\n'.format(r=run, nf=nfiles))
-    fsh.write ('cp ntuples/*run{r}_spills$firstspill-$lastspill.root {o}\n'.format(r=run, o=outdir))
+    fsh.write ('bin/H4Reco '+cfg+' {r} $firstspill {nf}\n\n'.format(r=run, nf=nfiles))
+    fsh.write ('mv '+outname+'/{r}/$firstspill.root {o}\n'.format(v=version, r=run, o=outdir))
     fsh.close ()
     #---HTCondor submit file
     fsub = open (jobname+'.sub', 'w')
@@ -152,18 +161,32 @@ def herculesSubmitJob (run, firstspill, nfiles, path, cfg, outdir, queue, job_di
         getstatusoutput ('cd '+job_dir+'; qsub -q ' + queue + ' ' + jobname + '; cd -')
 
 # ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ----
+def getPath2data (path, cfg, whichpath = 'path2data'):
+    # parse cfg file to find the path parameter
+    path2data = ''
+    with open(path+'/'+cfg) as cfgfile:
+        for line in cfgfile:
+            print (line)
+            words = line.split()
+            if len(words) == 2:
+                if whichpath in words[0]:
+                    path2data = words[1]
+                    break
+    return path2data 
 
 def getNumberOfSpills (run, path, cfg):
     nspills = 0
     # parse cfg file to find the path2data parameter
-    with open(path+'/'+cfg) as cfgfile:
-        for line in cfgfile:
-            words = line.split()
-            if len(words) == 2:
-                if words[0] == 'path2data':
-                    path2data = words[1]
-                    break
-
+    path2data = getPath2data(path, cfg)
+    if not len(path2data):
+        with open(path+'/'+cfg) as cfgfile:
+            for line in cfgfile:
+                words = line.split()
+                if len(words) == 2:
+                    if 'importCfg' in words[0]:
+                        path2data = getPath2data(path, words[1])
+                        break
+                        
     datafiles = [name for name in os.listdir(path2data+'/'+run+'/') if os.path.isfile(path2data+'/'+run+'/'+name)]
 
     ## find the number of files in the directory and take this as the number of spills
@@ -197,6 +220,7 @@ if __name__ == '__main__':
     parser.add_argument('--dryrun' , action="store_true", default=False, help='do not submit the jobs, just create them')
     parser.add_argument('--batch' , default='condor', help='batch system to use')
     parser.add_argument('--resub' , action="store_true", default=False, help='resubmit failed jobs')
+    parser.add_argument('--notar' , action="store_true", default=False, help='do not create tarball')
     
     args = parser.parse_args ()
 
@@ -214,6 +238,7 @@ if __name__ == '__main__':
     local_path = getoutput('pwd')
     date = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     job_dir = local_path+"/"+date+"_ntuples_"+args.version
+    print ("Jobs directory: " + job_dir)
     getstatusoutput('mkdir -p '+job_dir)
     if local_path.endswith('scripts'):
         local_path = local_path[:-len('scripts')]
@@ -227,21 +252,30 @@ if __name__ == '__main__':
         if runs_file:
             for run in runs_file:
                 args.runs.append(run.rstrip())
-
+    outname = getPath2data(local_path, args.cfg, 'outNameSuffix')
+    if not len(outname):
+        with open(local_path+'/'+args.cfg) as cfgfile:
+            for line in cfgfile:
+                words = line.split()
+                if len(words) == 2:
+                    if 'importCfg' in words[0]:
+                        path2data = getPath2data(local_path, words[1], 'outNameSuffix')
+                        break
+    
     ## resubmit failed
     if args.resub:
         args.runs = resubmitFailed(args.runs, stageOutDir)
 
     ## create jobs
-    getstatusoutput('tar --exclude-vcs --exclude="20*_ntuples*" -cjf '+job_dir+'/job.tar -C '+local_path+' .')
+    if not args.notar: getstatusoutput('tar --exclude-vcs --exclude="20*_ntuples*" -cjf '+job_dir+'/job.tar -C '+local_path+' .')
     print('submitting', len(args.runs), 'jobs to queue', args.queue)
 
     if args.batch == 'condor':
         if args.spillsperjob > 0:
             for run in args.runs:
-                htcondorSubmitJobs(run, args.spillsperjob, local_path, args.cfg, stageOutDir, args.queue, job_dir, args.dryrun)
+                htcondorSubmitJobs(run, args.spillsperjob, local_path, args.cfg, stageOutDir, args.queue, job_dir, args.dryrun, args.notar, args.version, outname)
         else:
-            htcondorSubmitJob(args.runs, local_path, args.cfg, stageOutDir, args.queue, job_dir, args.dryrun)
+            htcondorSubmitJob(args.runs, local_path, args.cfg, stageOutDir, args.queue, job_dir, args.dryrun, args.notar, args.version, outname)
     else:
         for run in args.runs:
             firstspill = 1
