@@ -28,9 +28,14 @@ bool TriggerTypeFilter::Begin(map<string, PluginBase*>& plugins, CfgManager& opt
     bool storeTree = opts.OptExist(instanceName_+".storeTree") ?
         opts.GetOpt<bool>(instanceName_+".storeTree") : true;
 
+    //---register tree
     RegisterSharedData(new TTree(trgTreeName.c_str(), "trg_tree"), "trg_tree", storeTree);
     trgTree_ = TrgTree(index, (TTree*)data_.back().obj);
     trgTree_.Init(maskToName_);
+    
+    //---register trigger bit
+    trg_ = "";
+    RegisterSharedData(&trg_, "trg_bit", false);
 
     return true;
 }
@@ -38,7 +43,7 @@ bool TriggerTypeFilter::Begin(map<string, PluginBase*>& plugins, CfgManager& opt
 bool TriggerTypeFilter::ProcessEvent(H4Tree& event, map<string, PluginBase*>& plugins, CfgManager& opts)
 {        
     //---check trigger type
-    string trg_type;
+    
     auto pos = std::find(event.triggerWordsBoard, event.triggerWordsBoard+event.nTriggerWords,
                          triggerBoard_);
     if(pos == event.triggerWordsBoard+event.nTriggerWords)
@@ -51,7 +56,7 @@ bool TriggerTypeFilter::ProcessEvent(H4Tree& event, map<string, PluginBase*>& pl
             //   hence the active trigger is the only one for which the bit is not set
             if((event.triggerWords[std::distance(event.triggerWordsBoard, pos)] & mask) != mask)
             {
-                trg_type = name;
+                trg_ = name.c_str();
                 trgTree_.trg = mask;
             }
         }
@@ -59,5 +64,5 @@ bool TriggerTypeFilter::ProcessEvent(H4Tree& event, map<string, PluginBase*>& pl
     
     trgTree_.Fill();
 
-    return filterEvents_ ? trg_type == filterName_ : true;
+    return filterEvents_ ? trg_.GetString().Data() == filterName_ : true;
 }

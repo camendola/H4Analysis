@@ -1,22 +1,31 @@
 #include "WFAnalyzer.h"
-#include <typeinfo>
 
 //----------Utils-------------------------------------------------------------------------
 bool WFAnalyzer::Begin(map<string, PluginBase*>& plugins, CfgManager& opts, uint64* index)
 {
+    trg_ = "";
+
     //---inputs---
-    if(!opts.OptExist(instanceName_+".srcInstanceName"))
+    for(auto& src : {"srcInstanceName", "trgInstanceName"})
     {
-        Log("no source plugin specified", ERR);
-        return false;
+        if(!opts.OptExist(instanceName_+"."+src))
+        {
+            Log("no "+string(src)+" plugin specified", ERR);
+            return false;
+        }
     }
     srcInstance_ = opts.GetOpt<string>(instanceName_+".srcInstanceName");
+    if(opts.OptExist(instanceName_+".trgInstanceName"))
+      trgInstance_ = opts.GetOpt<string>(instanceName_+".trgInstanceName");
+    else
+      trgInstance_="";
     channelsNames_ = opts.GetOpt<vector<string> >(instanceName_+".channelsNames");
     timeRecoTypes_ = opts.GetOpt<vector<string> >(instanceName_+".timeRecoTypes");
 
     //---load WFs from source instance shared data
     for(auto& channel : channelsNames_)
     {
+        std::cout << " >> channel " << channel << std::endl;
         auto shared_data = plugins[srcInstance_]->GetSharedData(srcInstance_+"_"+channel, "", false);
         if(shared_data.size() != 0)
         {
@@ -46,9 +55,11 @@ bool WFAnalyzer::Begin(map<string, PluginBase*>& plugins, CfgManager& opts, uint
                 TH1* wfTemplate=(TH1*)templateFile->Get((opts.GetOpt<string>(channel+".templateFit.file", 1)+templateTag).c_str());
                 if(wfTemplate)
                 {
-                    templates_[channel] = (TH1F*) wfTemplate->Clone();
-                    templates_[channel]->SetDirectory(0);
-                    WFs_[channel]->SetTemplate(templates_[channel]);
+                    templates_["PHYS"][channel] = (TH1F*) wfTemplate->Clone();
+						  //std::cout << templates_["PHYS"][channel]->GetEntries() << std::endl;
+                    templates_["PHYS"][channel]->SetDirectory(0);
+                    WFs_[channel]->SetTemplate(templates_["PHYS"][channel]);
+                    //std::cout << " ... SetTemplate for channel " << channel << std::endl;
                 }
                 else
                 {
@@ -64,6 +75,33 @@ bool WFAnalyzer::Begin(map<string, PluginBase*>& plugins, CfgManager& opts, uint
             }
             templateFile->Close();
         }
+        // added from Simone S.
+        if(opts.OptExist(channel+".templateFit.laserFile"))
+        {
+            TFile* templateFile = TFile::Open(opts.GetOpt<string>(channel+".templateFit.laserFile", 0).c_str(), ".READ");
+            if(templateFile)
+            {
+                TH1* wfTemplate=(TH1*)templateFile->Get((opts.GetOpt<string>(channel+".templateFit.laserFile", 1)+templateTag).c_str());
+                if(wfTemplate)
+                {
+                    templates_["LASER"][channel] = (TH1F*) wfTemplate->Clone();
+                    templates_["LASER"][channel]->SetDirectory(0);
+                }
+                else
+                {
+                    Log("template "+opts.GetOpt<string>(channel+".templateFit.laserFile", 1)
+                        +" not found in "+opts.GetOpt<string>(channel+".templateFit.laserFile", 0), ERR);
+                    return false;
+                }                
+            }
+            else
+            {
+                Log("template file "+opts.GetOpt<string>(channel+".templateFit.laserFile", 0)+" not found", ERR);
+                return false;
+            }
+            templateFile->Close();
+        }
+        //
         if(opts.OptExist(channel+".templateFit.spikeFile"))
         {
             TFile* templateFile = TFile::Open(opts.GetOpt<string>(channel+".templateFit.spikeFile", 0).c_str(), ".READ");
@@ -127,6 +165,23 @@ bool WFAnalyzer::ProcessEvent(H4Tree& event, map<string, PluginBase*>& plugins, 
     if(opts.GetOpt<int>(instanceName_+".fillWFtree"))
         fillWFtree = *digiTree_.index % opts.GetOpt<int>(instanceName_+".WFtreePrescale") == 0;
 
+    //---Check if trigger bit has changed from previous event        
+    auto ctrg = "PHYS";
+    
+    if (trgInstance_!="")
+      ctrg=((TObjString*)(plugins[trgInstance_]->GetSharedData(trgInstance_+"_trg_bit", "", false))[0].obj)->GetString().Data();
+
+    if(ctrg != trg_ && 
+       templates_.find(ctrg) != templates_.end())
+      {
+	for(auto& channel : channelsNames_)
+	  {
+	    if(templates_[ctrg].find(channel) != templates_[ctrg].end())
+	      WFs_[channel]->SetTemplate(templates_[ctrg][channel]);       
+	  }                                
+    trg_ = ctrg;
+      }
+
     //---compute reco variables
     for(auto& channel : channelsNames_)
     {
@@ -160,10 +215,12 @@ bool WFAnalyzer::ProcessEvent(H4Tree& event, map<string, PluginBase*>& plugins, 
                                                opts.GetOpt<int>(channel+".signalInt", 1));
 	WFBaseline baselineInfo; 
 	if (opts.OptExist(channel+".baseline"))
-            baselineInfo = WFs_[channel]->SubtractBaseline(opts.GetOpt<float>(channel+".baseline"));
+	  baselineInfo = WFs_[channel]->SubtractBaseline(opts.GetOpt<float>(channel+".baseline"));
+	else if (opts.OptExist(channel+".baselineFit"))
+	  baselineInfo = WFs_[channel]->SubtractBaselineFit();
 	else
-            baselineInfo = WFs_[channel]->SubtractBaseline();
-	    
+	  baselineInfo = WFs_[channel]->SubtractBaseline();
+	
 	//FIXME MAREMMA MAIALA
         WFFitResults interpolAmpMax;
         if(opts.OptExist(channel+".signalWin", 4))
@@ -184,9 +241,10 @@ bool WFAnalyzer::ProcessEvent(H4Tree& event, map<string, PluginBase*>& plugins, 
                                                                   opts.GetOpt<int>(channel+".signalWin", 2)/2,
                                                                   opts.GetOpt<int>(channel+".signalWin", 2)/2,
                                                                   max_function);
+				//if(channel == "C2") std::cout << "  MAX amp " << interpolAmpMax.ampl << " at " << interpolAmpMax.time << std::endl;
         }
         digiTree_.pedestal[outCh] = baselineInfo.baseline;
-	WFClassLiTEDTU* islitedtu = dynamic_cast<WFClassLiTEDTU*>(WFs_[channel]);
+	WFClassLiTeDTU* islitedtu = dynamic_cast<WFClassLiTeDTU*>(WFs_[channel]);
 	if (islitedtu != NULL) digiTree_.gain[outCh] = WFs_[channel]->GetGain();
         digiTree_.b_charge[outCh] = WFs_[channel]->GetIntegral(opts.GetOpt<int>(channel+".baselineInt", 0), 
                                                                opts.GetOpt<int>(channel+".baselineInt", 1));        
@@ -222,26 +280,27 @@ bool WFAnalyzer::ProcessEvent(H4Tree& event, map<string, PluginBase*>& plugins, 
             }
         }
         digiTree_.period[outCh] = WFs_[channel]->GetPeriod();
-
         //---template fit (only specified channels)
         if(opts.OptExist(channel+".templateFit.file"))
         {
+				//std::cout << " Input to TemplateFit() : " << (opts.OptExist(channel+".templateFit.amplitudeThreshold") ? opts.GetOpt<float>(channel+".templateFit.amplitudeThreshold") : 0 )<< "\t" << opts.GetOpt<float>(channel+".templateFit.fitWin", 0) << "\t" << opts.GetOpt<int>(channel+".templateFit.fitWin", 1) << "\t" << opts.GetOpt<int>(channel+".templateFit.fitWin", 2) << std::endl;
             auto fitResults = WFs_[channel]->TemplateFit(
                 opts.OptExist(channel+".templateFit.amplitudeThreshold") ? opts.GetOpt<float>(channel+".templateFit.amplitudeThreshold") : 0,
                 opts.GetOpt<float>(channel+".templateFit.fitWin", 0),
                 opts.GetOpt<int>(channel+".templateFit.fitWin", 1),
                 opts.GetOpt<int>(channel+".templateFit.fitWin", 2));
-
             digiTree_.fit_ampl[outCh] = fitResults.ampl;
             digiTree_.fit_time[outCh] = fitResults.time;
             digiTree_.fit_terr[outCh] = fitResults.error;            
             digiTree_.fit_chi2[outCh] = fitResults.chi2;
             digiTree_.fit_period[outCh] = WFs_[channel]->GetTemplateFitPeriod();
 
+            //if(channel == "C2" || channel == "MCP1" || channel == "MCP2") //std::cout << "--> Channel " << channel <<  " EV " << event.evtNumber << " Fit_ampl  ="<< fitResults.ampl << "\t Chi2 " << fitResults.chi2 << std::endl;
+
             WFFitResultsScintPlusSpike fitResultsScintPlusSpike{-1, -1000, -1, -1000, -1};
             if(opts.OptExist(channel+".templateFit.spikeFile"))
             {
-                WFs_[channel]->SetTemplateScint(templates_[channel]);
+                WFs_[channel]->SetTemplateScint(templates_["PHYS"][channel]);
                 WFs_[channel]->SetTemplateSpike(spikeTemplates_[channel]);
                 fitResultsScintPlusSpike = WFs_[channel]->TemplateFitScintPlusSpike(
                     opts.OptExist(channel+".templateFit.amplitudeThreshold") ? opts.GetOpt<float>(channel+".templateFit.amplitudeThreshold") : 0,

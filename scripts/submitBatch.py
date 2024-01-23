@@ -166,11 +166,12 @@ def getPath2data (path, cfg, whichpath = 'path2data'):
     path2data = ''
     with open(path+'/'+cfg) as cfgfile:
         for line in cfgfile:
-            print (line)
+            #print (line)
             words = line.split()
             if len(words) == 2:
                 if whichpath in words[0]:
                     path2data = words[1]
+                    #print(" ----> Found the path " + path2data)
                     break
     return path2data 
 
@@ -186,7 +187,7 @@ def getNumberOfSpills (run, path, cfg):
                     if 'importCfg' in words[0]:
                         path2data = getPath2data(path, words[1])
                         break
-                        
+    print(f' [INPUT] Data from {path2data}')
     datafiles = [name for name in os.listdir(path2data+'/'+run+'/') if os.path.isfile(path2data+'/'+run+'/'+name)]
 
     ## find the number of files in the directory and take this as the number of spills
@@ -226,7 +227,10 @@ if __name__ == '__main__':
 
     ## check ntuple version
     stageOutDir = args.storage+'/ntuples_'+args.version+'/'
+    if len(args.runs) == 1 : 
+        stageOutDir = stageOutDir + str(args.runs[0])+'/'
     stageOutDir = stageOutDir.replace('//', '/')
+    print(' [OUTPUT] will be saved in '+stageOutDir)
     
     if args.batch == 'lxbatch':
         if getoutput('ls '+stageOutDir) == "":
@@ -237,7 +241,7 @@ if __name__ == '__main__':
     ## job setup
     local_path = getoutput('pwd')
     date = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    job_dir = local_path+"/"+date+"_ntuples_"+args.version
+    job_dir = local_path+"/JobReport/"+date+"_ntuples_"+args.version
     print ("Jobs directory: " + job_dir)
     getstatusoutput('mkdir -p '+job_dir)
     if local_path.endswith('scripts'):
@@ -259,8 +263,9 @@ if __name__ == '__main__':
                 words = line.split()
                 if len(words) == 2:
                     if 'importCfg' in words[0]:
-                        path2data = getPath2data(local_path, words[1], 'outNameSuffix')
+                        outname = getPath2data(local_path, words[1], 'outNameSuffix')
                         break
+    print(f' [OUTPUT] Intermediate location is {outname}/')
     
     ## resubmit failed
     if args.resub:
