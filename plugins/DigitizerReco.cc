@@ -40,17 +40,19 @@ bool DigitizerReco::Begin(map<string, PluginBase*>& plugins, CfgManager& opts, u
     {
         nSamples_[channel] = opts.GetOpt<int>(channel+".nSamples");
         auto tUnit = opts.GetOpt<float>(channel+".tUnit");
+        auto polarity = opts.OptExist(channel+".polarity") ? opts.GetOpt<int>(channel+".polarity") : 1;
         if(opts.OptExist(channel+".type"))
         {
+            std::cout << " >> channel.type" << std::endl;
             if(opts.GetOpt<string>(channel+".type") == "NINO")
-                WFs_[channel] = new WFClassNINO(opts.GetOpt<int>(channel+".polarity"), tUnit);
+                WFs_[channel] = new WFClassNINO(polarity, tUnit);
             else if(opts.GetOpt<string>(channel+".type") == "Clock")
-                WFs_[channel] = new WFClassClock(tUnit);
-            else if(opts.GetOpt<string>(channel+".type") == "LiTEDTU")
-                WFs_[channel] = new WFClassLiTEDTU(opts.GetOpt<int>(channel+".polarity"), tUnit);
+                WFs_[channel] = new WFClassClock(polarity,tUnit);
+            else if(opts.GetOpt<string>(channel+".type") == "LiTeDTU")
+                WFs_[channel] = new WFClassLiTeDTU(polarity, tUnit);
         }
         else
-            WFs_[channel] = new WFClass(opts.GetOpt<int>(channel+".polarity"), tUnit);
+            WFs_[channel] = new WFClass(polarity, tUnit);
         
         
         //---set channel calibration if available
@@ -85,18 +87,28 @@ bool DigitizerReco::ProcessEvent(H4Tree& event, map<string, PluginBase*>& plugin
     
     //---user channels
     bool evtStatus = true;
+    //--- check the time alignement
+//    for (int i = 0; i<6; i++){
+//        long long int Tdiff = event.evtTime[2*i+1]-event.evtTime[0];
+//        //std::cout<< " check desync wrt " << 2*i+1 << " event " << event.evtNumber << " Tdiff " << Tdiff/1000. << std::endl;
+//        if(fabs(Tdiff/1000.) > 0.5){
+//            evtStatus = false;
+//            std::cout<< " found desync wrt " << 2*i+1 << " event " << event.evtNumber << " Tdiff " << Tdiff << std::endl;
+//        }
+//    }
+//
     
     for(auto& channel : channelsNames_)
     {
         //---reset and read new WFs_
         WFs_[channel]->Reset();
+	
         auto digiBd = opts.GetOpt<unsigned int>(channel+".digiBoard");
         auto digiGr = opts.GetOpt<unsigned int>(channel+".digiGroup");
         auto digiCh = opts.GetOpt<unsigned int>(channel+".digiChannel");
         auto offset = event.digiMap.at(make_tuple(digiBd, digiGr, digiCh));
         auto max_sample = offset+std::min(nSamples_[channel], event.digiNSamplesMap[make_tuple(digiBd, digiGr, digiCh)]); 
         auto iSample = offset;
-	
         while(iSample < max_sample && event.digiBoard[iSample] != -1)
         {
             //Set the start index cell
@@ -107,19 +119,20 @@ bool DigitizerReco::ProcessEvent(H4Tree& event, map<string, PluginBase*>& plugin
             //---skip everything if one channel is bad
             if(event.digiSampleValue[iSample] > 1e6)
             {
-		evtStatus = false;
+                evtStatus = false;
                 WFs_[channel]->AddSample(4095);
             }
             else if (channel == "CLK")
             {
-		WFs_[channel]->AddSample(event.digiSampleValue[iSample]);
+                WFs_[channel]->AddSample(event.digiSampleValue[iSample]);
             }
-	    else
+            else
             {
-		WFs_[channel]->AddSample(event.digiSampleValue[iSample], event.digiSampleGain[iSample]);
+                WFs_[channel]->AddSample(event.digiSampleValue[iSample], event.digiSampleGain[iSample]);
             }
-	    iSample++;
+            iSample++;
         }
+
         if(opts.OptExist(channel+".useTrigRef") && opts.GetOpt<bool>(channel+".useTrigRef"))
             WFs_[channel]->SetTrigRef(trigRef);
         if(WFs_[channel]->GetCalibration())

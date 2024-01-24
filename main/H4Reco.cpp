@@ -144,6 +144,7 @@ int main(int argc, char* argv[])
     string run = opts.GetOpt<string>("h4reco.run");
     int totLoops= opts.OptExist("h4reco.totLoops") ? opts.GetOpt<int>("h4reco.totLoops") : 1;
 
+
     //-----Load raw data-----
     vector<string> spillOpt(1, to_string(spill));
     opts.SetOpt("h4reco.firstSpill", spillOpt);
@@ -273,6 +274,15 @@ int main(int argc, char* argv[])
 	//---events loop
 	while((dataLoader.NextEvent() && (nEvents < maxEvents || maxEvents == -1)) || (isSim && (nEvents < maxEvents)))
         {
+       bool time_aligned = true;
+       vector<int> VFE_ch = {1,3,5,7,9};
+       for(auto& ch : VFE_ch){   
+          //std::cout << "VFE channel " << ch << std::endl;
+          if((long long int)(dataLoader.GetTree().evtTime[0] - dataLoader.GetTree().evtTime[ch]) > 1500) time_aligned = false;
+          if((long long int)(dataLoader.GetTree().evtTime[0] - dataLoader.GetTree().evtTime[ch]) <  200) time_aligned = false;
+       }
+       if((long long int)(dataLoader.GetTree().evtTime[11] - dataLoader.GetTree().evtTime[0]) > 200.) time_aligned = false;
+       //if(!time_aligned) continue;
 	    if(dataLoader.FirstEventInSpill())
             {
                 cout << "\033[1;36m" << ">>> Processed spills: " << dataLoader.GetNFilesProcessed() << "/" << dataLoader.GetNFiles() << endl;
@@ -301,18 +311,26 @@ int main(int argc, char* argv[])
                 }
                 HandleException(eptr, plugin);
             }
+
+	    //    cbasile: check if the time-stamps synchronization hold
+            //int nDigitizers = (int)(dataLoader.GetTree().nEvtTimes/2); 
+            //std::cout << " --> nDigitizers " << nDigitizers << std::endl; 
+            //for(int iD=0; iD<nDigitizers; ++iD){
+            //    if(fabs((long long int)(dataLoader.GetTree().evtTime[2*iD+1] - dataLoader.GetTree().evtTime[0])) > 500.) status = false;   
+            //}
         
 	    //---Fill the main tree with info variables and increase event counter
             mainTree.time_stamps.clear();
             for(int iT=0; iT<dataLoader.GetTree().nEvtTimes; ++iT)
                 mainTree.time_stamps.push_back(dataLoader.GetTree().evtTime[iT]);
-	    mainTree.evt_flag = status;
-	    mainTree.run = dataLoader.GetTree().runNumber;
-	    mainTree.spill = dataLoader.GetTree().spillNumber;
-	    mainTree.event = dataLoader.GetTree().evtNumber;
-	    mainTree.Fill();
-	    ++nEvents;
+            mainTree.evt_flag = status;
+            mainTree.run = dataLoader.GetTree().runNumber;
+            mainTree.spill = dataLoader.GetTree().spillNumber;
+            mainTree.event = dataLoader.GetTree().evtNumber;
+            mainTree.Fill();
+            ++nEvents;
         }
+    cout << ">>> TOTAL processed events: " << nEvents << "\033[0m" << endl;
 
 	//---end
 	for(auto& plugin : pluginSequence)

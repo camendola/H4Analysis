@@ -8,7 +8,7 @@
 #include "interface/DigiTree.h"
 #include "interface/WFTree.h"
 #include "interface/WFClass.h"
-#include "interface/WFClassLiTEDTU.h"
+#include "interface/WFClassLiTeDTU.h"
 #include "interface/WFClassNINO.h"
 #include "interface/WFClassClock.h"
 #include "interface/WFViewer.h"
