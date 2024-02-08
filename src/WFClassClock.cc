@@ -1,10 +1,83 @@
 #include "interface/WFClassClock.h"
+#include "TError.h" 
 
 //**********Constructors******************************************************************
 
-WFClassClock::WFClassClock(float tUnit):
-    WFClass(1., tUnit), extPeriod_(-1), clkPeriod_(-1), tmplFitPeriod_(-1)
+WFClassClock::WFClassClock(int polarity,float tUnit):
+    WFClass(polarity, tUnit), extPeriod_(-1), clkPeriod_(-1), tmplFitPeriod_(-1)
 {}
+
+//---------estimate the baseline from a template fit of the clock signal
+WFBaseline WFClassClock::SubtractBaselineFit(int min, int max)
+{
+    if(min!=-1 && max==-1)
+    {
+        bWinMin_=min;
+        bWinMax_=max;
+    }
+    //---compute baseline
+    float baseline_=0;
+    bRMS_=10; //custom value as starting point...
+
+    //Remove annoying Minuit2 warnings
+    gErrorIgnoreLevel = kError;
+
+    //---setup minimization
+    fWinMin_=bWinMin_;
+    fWinMax_=bWinMax_;
+    int maxSample_=bWinMin_;
+    int minSample_=bWinMin_;
+    for(int iSample=bWinMin_; iSample<bWinMax_; ++iSample)
+    {
+        if(iSample < 0)
+            continue;
+        if(iSample >= samples_.size())
+            break;
+        if(samples_.at(iSample) > samples_.at(maxSample_)) 
+            maxSample_ = iSample;
+        if(samples_.at(iSample) < samples_.at(minSample_)) 
+            minSample_ = iSample;
+    }    
+
+    float baseline_mean=(samples_.at(maxSample_)+samples_.at(minSample_))/2.;
+    std::default_random_engine generator;
+    auto t0 = (times_.at(bWinMin_)+times_.at(bWinMax_))/2.;
+    std::uniform_real_distribution<float> rnd_t0(-2,2);
+    ROOT::Math::Functor chi2(this, &WFClassClock::TemplateChi2, 2);
+    ROOT::Math::Minimizer* minimizer = ROOT::Math::Factory::CreateMinimizer("Minuit2", "Migrad");
+    minimizer->SetMaxFunctionCalls(100000);
+    minimizer->SetMaxIterations(1000);
+    minimizer->SetTolerance(1e-4);
+    minimizer->SetPrintLevel(-1);
+    minimizer->SetFunction(chi2);
+    minimizer->SetLimitedVariable(0, "deltaV", baseline_mean, 1e-2, baseline_mean*0.7,baseline_mean*1.3);
+    minimizer->SetLimitedVariable(1, "deltaT", t0, 1e-3, t0-10, t0+10);
+    //---fit
+    minimizer->Minimize();
+    int tries=0;
+    while(minimizer->Status() != 0 && tries < 1000)
+      {
+	minimizer->SetVariableValue(1, (times_[bWinMin_]+times_[bWinMax_])/2.+rnd_t0(generator));
+	minimizer->Minimize();
+	++tries;
+      }    
+    baseline_ = minimizer->X()[0];
+    tmplFitAmp_ = minimizer->X()[0];
+    tmplFitTime_ = minimizer->X()[1];
+    delete minimizer;        
+
+    //---subtract baseline
+    for(unsigned int iSample=0; iSample<samples_.size(); ++iSample)
+        samples_.at(iSample) = (samples_.at(iSample) - baseline_);    
+    //---interpolate baseline
+    float A=0, B=0;
+    float myChi2= float(TemplateChi2()/(bWinMax_-bWinMin_));
+    bRMS_*=TMath::Sqrt(myChi2); //fermi method to estimate uncertainty...
+    //restore the initialised fit conditions before return
+    tmplFitAmp_ = -1;
+    tmplFitTime_ = 0;
+    return WFBaseline{baseline_, bRMS_, A, B, myChi2};
+}
 
 //**********Getters***********************************************************************
 
@@ -20,6 +93,8 @@ WFFitResults WFClassClock::GetTime(string method, vector<float>& params)
             return GetTimeCLK(params[0], params[1]);
         else if(params.size()==3)
             return GetTimeCLK(params[0], params[1], params[2]);
+        else if(params.size()==4)
+	  return GetTimeCLK(params[0], params[1], params[2],params[3]);
         else
             cout << ">>>ERROR: wrong number of arguments passed for CLK time computation: " << params.size()
                  << ". usage: CLK [min max] [+/- 1]" << endl;
@@ -136,9 +211,12 @@ WFFitResults WFClassClock::GetTimeCLK(float wleft, float wright, int min, int ma
 //---Template fit of each single clock cycle
 WFFitResults WFClassClock::TemplateFit(float ampl_threshold, float offset, int lW, int hW)
 {
+    //Remove annoying Minuit2 warnings
+    gErrorIgnoreLevel = kError;
+
     if(tmplFitAmp_ == -1)
     {
-        BaselineRMS();
+        // BaselineRMS();
         GetAmpMax();
         bRMS_ = 10.;
         int N=0;
@@ -164,10 +242,10 @@ WFFitResults WFClassClock::TemplateFit(float ampl_threshold, float offset, int l
                 minimizer->SetMaxFunctionCalls(100000);
                 minimizer->SetMaxIterations(1000);
                 minimizer->SetTolerance(1e-2);
-                minimizer->SetPrintLevel(0);
+                minimizer->SetPrintLevel(-1);
                 minimizer->SetFunction(chi2);
-                minimizer->SetLimitedVariable(0, "amplitude", GetAmpMax(), 1e-2, GetAmpMax()*0.8, GetAmpMax()*1.2);
-                minimizer->SetLimitedVariable(1, "deltaT", t0, 1e-3, times_[fWinMin_], times_[fWinMax_]);
+                minimizer->SetLimitedVariable(0, "deltaV", 0, 1e-2, -0.1*GetAmpMax(), 0.1*GetAmpMax() );
+                minimizer->SetLimitedVariable(1, "deltaT", t0, 1e-3, times_[fWinMin_]-1., times_[fWinMax_]+1);
                 //---fit
                 minimizer->Minimize();
                 int tries=0;
@@ -216,3 +294,82 @@ void WFClassClock::AddSample(float sample)
     times_.push_back( (samples_.size()-1.)*tUnit_ );
     samples_ = uncalibSamples_;
 };
+
+//----------Set the fit template----------------------------------------------------------
+void WFClassClock::SetTemplate(TH1* templateWF)
+{
+    //---check input
+    if(!templateWF)
+    {
+        cout << ">>>ERROR: template passed as input does not exist" << endl;
+        return;
+    }
+
+    //---reset template fit variables
+    if(interpolator_)
+        delete interpolator_;
+
+    interpolator_ = new ROOT::Math::Interpolator(0, ROOT::Math::Interpolation::kCSPLINE);
+    //tmplFitTime_ = templateWF->GetBinCenter(templateWF->GetMaximumBin());
+    tmplFitTime_ = 0; 
+    tmplFitAmp_  = -1;
+
+    //---fill interpolator data
+    vector<double> x, y;
+    for(int iBin=1; iBin<=templateWF->GetNbinsX(); ++iBin)
+    {
+        x.push_back(templateWF->GetBinCenter(iBin)-tmplFitTime_);
+        y.push_back(templateWF->GetBinContent(iBin));
+    }
+    interpolator_->SetData(x, y);
+    interpolatorMin_ = templateWF->GetBinCenter(1)-tmplFitTime_;
+    interpolatorMax_ = templateWF->GetBinCenter(templateWF->GetNbinsX())-tmplFitTime_;
+    return;
+}
+
+double WFClassClock::TemplateChi2(const double* par)
+{
+    double chi2 = 0;
+    double delta2 = 0;
+#ifdef PARALLEL
+#pragma omp parallel for reduction(+:chi2)
+#endif    
+    for(int iSample=fWinMin_; iSample<=fWinMax_; ++iSample)
+    {
+        if(iSample < 0 || iSample >= int(samples_.size()) 
+                || (par && (times_.at(iSample)-par[1] < interpolatorMin_ || times_.at(iSample)-par[1] > interpolatorMax_) ) 
+                )
+
+        {
+            //cout << ">>>WARNING: template fit out of samples rage (chi2 set to 9999)" << endl;
+            //cout << "iSample " << iSample << endl;
+            //cout << "polarity " << polarity_<< endl;
+            //cout << " interpolatorMin_ "<< interpolatorMin_<< endl;
+            //cout << " interpolatorMax_ "<< interpolatorMax_<< endl;
+            //cout << " fWinMin_ "<< fWinMin_<< endl;
+            //cout << " fWinMax_ "<< fWinMax_<< endl;
+            //cout << "( times_.at(iSample) -par[1])" << times_.at(iSample)-par[1] << endl;
+            //cout << "par[1] " << par[1] << endl;
+            chi2 += 9999;
+        }
+        else
+        {
+            //---fit: par[0]*ref_shape(t-par[1]) par[0]=amplitude, par[1]=DeltaT
+            //---if not fitting return chi2 value of best fit            
+            if(par)
+            {
+                //auto deriv = par[0]*interpolator_->Deriv(times_[iSample]-par[1]);
+                auto err2 = bRMS_*bRMS_;// + pow(tUnit_/sqrt(12)*deriv/2, 2);
+                delta2 = pow((samples_.at(iSample) - par[0]+interpolator_->Eval(times_[iSample]-par[1])), 2)/err2;
+            }
+            else
+            {
+                //auto deriv = tmplFitAmp_*interpolator_->Deriv(times_[iSample]-tmplFitTime_);
+                auto err2 = bRMS_*bRMS_;// + pow(tUnit_/sqrt(12)*deriv/2, 2);
+                delta2 = pow((samples_.at(iSample) - tmplFitAmp_+interpolator_->Eval(times_[iSample]-tmplFitTime_)), 2)/err2;
+            }
+            chi2 += delta2;
+        }
+    }
+    return chi2;
+}

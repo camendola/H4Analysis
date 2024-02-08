@@ -95,6 +95,9 @@ public:
     //---dtor---
     ~WFClass() {};
 
+    //crop method
+    void CropWF(WFClass& WF, int firstSample=-1, int lastSample=-1);
+
     //---getters---
     inline const vector<double>*   GetSamples() {return &samples_;};
     inline const vector<double>*   GetTimes() {return &times_;};
@@ -151,7 +154,7 @@ public:
     void                           SetSignalIntegralWindow(int min, int max);
     void                           SetBaselineWindow(int min, int max);
     void                           SetBaselineIntegralWindow(int min, int max);
-    void                           SetTemplate(TH1* templateWF=NULL);
+    virtual void                   SetTemplate(TH1* templateWF=NULL);
     virtual inline void            SetPeriod(float period) { return; };
 
     //---utils---
@@ -161,6 +164,7 @@ public:
     virtual void                           AddSample(float sample, float gain) {AddSample(sample);};
     WFBaseline                             SubtractBaseline(int min=-1, int max=-1);
     WFBaseline                             SubtractBaseline(float baseline);
+    virtual WFBaseline                     SubtractBaselineFit(int min=-1, int max=-1) {return WFBaseline{0, 0, 0, 0, 999};};
 				           
     virtual WFFitResults                   TemplateFit(float amp_threshold=0., float offset=0., int lW=0, int hW=0);
 				           
@@ -179,7 +183,7 @@ protected:
     //---utils---
     float                          BaselineRMS();
     float                          LinearInterpolation(float& A, float& B, const int& min, const int& max, const int& skipSample=-1);
-    double                         TemplateChi2(const double* par=NULL);
+    virtual  double                TemplateChi2(const double* par=NULL);
     double                         AnalyticChi2(const double* par=NULL);
     
 protected:

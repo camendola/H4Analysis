@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python3
 
 import sys
 import os
@@ -32,7 +32,7 @@ def lxbatchSubmitJob (run, firstspill, nfiles, path, cfg, outdir, queue, job_dir
     f.write ('#!/bin/sh' + '\n\n')
     f.write ('cp '+jobtar+' ./ \n')
     f.write ('tar -xf job.tar \n')
-    f.write ('source scripts/setup.sh \n')
+    #f.write ('source scripts/setup.sh \n')
     f.write ('make -j 2 \n')
     f.write ('cp '+path+'/'+cfg+' job.cfg \n\n')
     f.write ('bin/H4Reco job.cfg {r} {fs} {nf}\n\n'.format(r=run, fs=firstspill, nf=nfiles))
@@ -54,13 +54,13 @@ def htcondorSubmitJob(runs, path, cfg, outdir, queue, job_dir, dryrun, notar, ve
     fsh.write ('cp '+jobtar+' ./ \n')
     if not notar:
         fsh.write ('tar -xf job.tar \n')
-        fsh.write ('source scripts/setup.sh \n')
+        #fsh.write ('source scripts/setup.sh \n')
         fsh.write ('make -j 2 \n')
         fsh.write ('cp '+path+'/'+cfg+' job.cfg \n\n')
         fsh.write ('bin/H4Reco job.cfg ${runs[${1}]}\n\n')
     else:
         fsh.write ('cd '+path+' \n')
-        fsh.write ('source scripts/setup.sh \n')
+        #fsh.write ('source scripts/setup.sh \n')
         fsh.write ('bin/H4Reco '+cfg+' ${runs[${1}]}\n\n')
     fsh.write ('cp '+outname+'/*${runs[${1}]}.root '+outdir+'\n')
     fsh.close ()
@@ -105,11 +105,11 @@ def htcondorSubmitJobs (run, nfiles, path, cfg, outdir, queue, job_dir, dryrun, 
     if not notar:
         fsh.write ('cp '+jobtar+' ./ \n')
         fsh.write ('tar -xf job.tar \n')
-        fsh.write ('source scripts/setup.sh \n')
+        #fsh.write ('source scripts/setup.sh \n')
         fsh.write ('make -j 2 \n')
     else: 
         fsh.write ('cd '+path+' \n')
-        fsh.write ('source scripts/setup.sh \n')
+        #fsh.write ('source scripts/setup.sh \n')
 
     fsh.write ('firstspill=$((${1}*'+str(nfiles)+'+1))\n')
     fsh.write ('lastspill=$(((${1}+1)*'+str(nfiles)+'))\n\n')
@@ -149,7 +149,7 @@ def herculesSubmitJob (run, firstspill, nfiles, path, cfg, outdir, queue, job_di
     f.write ('cd H4Analysis-master/ \n\n')
     f.write ('cp '+path+'/ntuples/Template*.root ./ntuples/ \n')
     f.write ('cp '+path+cfg+' job.cfg \n')
-    f.write ('source scripts/setup.sh \n')
+    #f.write ('source scripts/setup.sh \n')
     f.write ('make -j 2\n\n')
     f.write ('bin/H4Reco job.cfg {r} {fs} {nf}\n\n'.format(r=run, fs=firstspill, nf=nfiles))
     f.write ('cp ntuples/*run{r}_spills{fs}-{ls}.root {o}\n'.format(r=run, fs=firstspill, ls=lastspill, o=outdir))
