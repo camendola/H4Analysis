@@ -460,8 +460,6 @@ void WFClass::Reset()
     tmplFitTimeErr_=-1;
     tmplFitAmp_=-1;
     tmplFitAmpShift_=0;
-    interpolatorMin_=-1;
-    interpolatorMax_=-1;
     uncalibSamples_.clear();
     calibSamples_.clear();
     gain_.clear();
@@ -520,6 +518,7 @@ WFBaseline WFClass::SubtractBaseline(int min, int max)
     }
     //---compute baseline
     float baseline_=0;
+    int nSamples=0;
     for(int iSample=bWinMin_; iSample<bWinMax_; ++iSample)
     {
         if(iSample < 0)
@@ -527,8 +526,9 @@ WFBaseline WFClass::SubtractBaseline(int min, int max)
         if(iSample >= samples_.size())
             break;
         baseline_ += samples_.at(iSample);
+	++nSamples; 
     }
-    baseline_ = baseline_/((float)(bWinMax_-bWinMin_));
+    baseline_ = baseline_/((float)nSamples);
     //---subtract baseline
     for(unsigned int iSample=0; iSample<samples_.size(); ++iSample)
         samples_.at(iSample) = (samples_.at(iSample) - baseline_);    
